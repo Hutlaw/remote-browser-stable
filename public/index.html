@@ -1,0 +1,462 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Remote Browser — Single Tab</title>
+<style>
+html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;background:#111;color:#fff}
+#topbar{height:44px;display:flex;align-items:center;padding:6px 10px;background:#0f1720;color:#fff;gap:8px;box-sizing:border-box}
+#address{flex:1;height:32px;padding:6px;border-radius:6px;border:0}
+#container{height:calc(100% - 44px);display:flex;flex-direction:column}
+#viewport{flex:1;display:flex;align-items:stretch;justify-content:stretch;background:#000}
+canvas{width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+.info{color:#cbd5e1;font-size:13px;margin-left:8px}
+.dev-trigger{margin-left:8px;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:#0b84ff;color:#000;font-weight:bold;cursor:pointer}
+.dev-overlay{position:fixed;left:0;top:0;width:100%;height:100%;background:rgba(3,7,12,0.85);display:none;align-items:center;justify-content:center;z-index:9999}
+.dev-panel{width:760px;max-width:95%;max-height:90%;overflow:auto;background:#061021;border-radius:10px;padding:18px;border:1px solid #123}
+.dev-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.dev-section{background:#05101a;padding:10px;border-radius:8px;border:1px solid #0b2430;color:#dbe}
+.small{font-size:12px;color:#9cb}
+.code{background:#02121a;padding:8px;border-radius:6px;font-family:monospace;font-size:12px;color:#9fe;overflow:auto}
+.dev-actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+.dev-close{position:absolute;right:18px;top:18px;background:transparent;border:0;color:#9fe;cursor:pointer;font-size:18px}
+.export-progress-wrap{margin-top:10px;background:#02121a;padding:8px;border-radius:6px;border:1px solid #083043;display:none;gap:8px;align-items:center}
+.export-bar{width:100%;height:12px;background:#05212a;border-radius:6px;overflow:hidden;position:relative}
+.export-bar-inner{height:100%;width:0%;background:#0b84ff;transition:width 120ms linear}
+.export-progress-meta{font-size:12px;color:#9cb;min-width:160px;margin-left:8px;text-align:right}
+.import-progress-wrap{margin-top:10px;background:#02121a;padding:8px;border-radius:6px;border:1px solid #083043;display:none;gap:8px;align-items:center}
+.import-bar{width:100%;height:12px;background:#05212a;border-radius:6px;overflow:hidden;position:relative}
+.import-bar-inner{height:100%;width:0%;background:#0bf58b;transition:width 120ms linear}
+.import-progress-meta{font-size:12px;color:#9cb;min-width:160px;margin-left:8px;text-align:right}
+.range{width:100%}
+.version-row{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.update-row{display:flex;gap:8px;align-items:center}
+.note-btn{width:18px;height:18px;border-radius:50%;background:#0b84ff;color:#000;display:inline-flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer}
+.dev-info{font-size:13px;color:#cfe;margin-left:8px}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <input id="address" type="text" placeholder="https://example.com" />
+  <button id="go">Go</button>
+  <div id="status" class="info">connecting...</div>
+  <div id="devTrigger" class="dev-trigger" title="Dev menu">i</div>
+</div>
+<div id="container">
+  <div id="viewport">
+    <canvas id="screen" width="1280" height="800"></canvas>
+  </div>
+</div>
+<div class="dev-overlay" id="devOverlay" aria-hidden="true">
+  <div class="dev-panel" role="dialog" aria-modal="true" aria-label="Dev Menu">
+    <button class="dev-close" id="devClose">✕</button>
+    <h2>Dev Menu <span class="small dev-info" id="devShortNote">Click the blue circle in the top-right of the topbar to open this menu.</span></h2>
+    <div class="dev-grid">
+      <div class="dev-section">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div><strong>Server Info</strong><div class="small">what this is running on</div></div>
+          <div id="devStatusBadge" class="small">loading...</div>
+        </div>
+        <div class="code" id="devServerInfo" style="margin-top:10px;max-height:180px"></div>
+      </div>
+      <div class="dev-section">
+        <div class="version-row">
+          <div>
+            <strong>Update / Version</strong>
+            <div class="small">current channel and version</div>
+          </div>
+          <div style="text-align:right">
+            <div id="localVersion" class="small">—</div>
+            <div style="margin-top:6px">
+              <button id="checkUpdatesBtn">Check updates</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:8px" class="small">Channel
+          <label style="margin-left:8px"><input type="radio" name="channel" value="stable" id="chStable" /> Stable</label>
+          <label style="margin-left:8px"><input type="radio" name="channel" value="unstable" id="chUnstable" /> Unstable</label>
+          <span class="note-btn" id="channelInfo" title="What does this mean?">?</span>
+        </div>
+        <div style="margin-top:10px" class="update-row">
+          <button id="downloadUpdateBtn" disabled>Download update</button>
+          <button id="applyUpdateBtn" disabled>Apply update</button>
+          <div id="updateStatus" class="small" style="margin-left:8px"></div>
+        </div>
+        <div style="margin-top:10px" class="small">If apply asks to restart the server, you can restart manually or use the Apply with restart button.</div>
+      </div>
+      <div class="dev-section">
+        <strong>Import / Export</strong>
+        <div class="small">export current profile or import (.tar.gz, .zip)</div>
+        <div style="margin-top:8px" class="dev-actions">
+          <button id="devExportBtn">Export (minimized)</button>
+          <button id="devExportFullBtn">Export (full)</button>
+          <label>
+            <input id="devImportFile" type="file" accept=".zip,.tar.gz,.tgz" />
+            <button id="devImportBtn">Import</button>
+          </label>
+          <div id="devImportStatus" class="small" style="margin-left:8px"></div>
+        </div>
+        <div class="export-progress-wrap" id="exportProgressWrap" role="status" aria-hidden="true">
+          <div class="export-bar"><div class="export-bar-inner" id="exportBarInner"></div></div>
+          <div class="export-progress-meta" id="exportProgressMeta">waiting...</div>
+        </div>
+        <div class="import-progress-wrap" id="importProgressWrap" role="status" aria-hidden="true">
+          <div class="import-bar"><div class="import-bar-inner" id="importBarInner"></div></div>
+          <div class="import-progress-meta" id="importProgressMeta">waiting...</div>
+        </div>
+      </div>
+      <div class="dev-section">
+        <strong>Image Quality</strong>
+        <div class="small">adjust JPEG quality for screencast (10-95)</div>
+        <div style="margin-top:10px">
+          <input id="qualityRange" class="range" type="range" min="10" max="95" value="60" />
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+            <div class="small">Quality: <span id="qualityValue">60</span></div>
+            <button id="setQualityBtn">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+      <button id="devRefresh">Refresh</button>
+      <button id="devCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+<script>
+const canvas = document.getElementById('screen')
+const ctx = canvas.getContext('2d')
+ctx.imageSmoothingEnabled = true
+const addressEl = document.getElementById('address')
+const goBtn = document.getElementById('go')
+const statusEl = document.getElementById('status')
+let ws
+let connId = null
+let frameBusy = false
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws')
+  ws.binaryType = 'arraybuffer'
+  ws.addEventListener('open', () => { statusEl.textContent = 'connected' })
+  ws.addEventListener('message', handleMessageWrapper)
+  ws.addEventListener('close', () => { statusEl.textContent = 'disconnected — reconnecting...'; setTimeout(connect, 1000) })
+  ws.addEventListener('error', () => { statusEl.textContent = 'ws error' })
+}
+connect()
+async function handleMessage(ev) {
+  try {
+    if (typeof ev.data === 'string' || ev.data instanceof String) {
+      const data = JSON.parse(ev.data)
+      if (data.type === 'init') {
+        canvas.width = data.width || canvas.width
+        canvas.height = data.height || canvas.height
+        connId = data.connId
+        fitCanvas()
+      } else if (data.type === 'navigated') {
+        statusEl.textContent = 'navigated: ' + data.url
+        setTimeout(() => statusEl.textContent = 'connected', 2000)
+      } else if (data.type === 'server-shutdown') {
+        try { window.open('','_self').close() } catch (e) {}
+        try { location.href = 'about:blank' } catch (e) {}
+        try { document.body.innerHTML = '<div style="color:#fff;padding:20px;font-family:monospace">Server shutting down…</div>' } catch (e) {}
+      } else if (data.type && (data.type.startsWith('export') || data.type.startsWith('import'))) {
+        handleDevWsMessage(data)
+      }
+    } else {
+      if (frameBusy) return
+      frameBusy = true
+      try {
+        const arr = ev.data
+        const blob = new Blob([arr], { type: 'image/jpeg' })
+        const bitmap = await createImageBitmap(blob)
+        ctx.clearRect(0,0,canvas.width,canvas.height)
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+        bitmap.close()
+      } catch (e) { console.warn('frame render err', e) } finally { frameBusy = false }
+    }
+  } catch (err) { console.warn(err); frameBusy = false }
+}
+function send(msg) {
+  if (!connId && msg.type !== 'init') msg.connId = connId
+  const txt = JSON.stringify(msg)
+  if (!ws || ws.readyState !== WebSocket.OPEN) setTimeout(() => { try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(txt) } catch (e) {} }, 200)
+  else ws.send(txt)
+}
+function fitCanvas() {
+  const topBarH = document.getElementById('topbar').clientHeight
+  const cw = window.innerWidth
+  const ch = window.innerHeight - topBarH
+  canvas.style.width = cw + 'px'
+  canvas.style.height = ch + 'px'
+}
+window.addEventListener('resize', fitCanvas)
+let lastMouse = { x: Math.floor(640), y: Math.floor(400) }
+let mouseDirty = false
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+  lastMouse = { x: Math.max(0, Math.min(canvas.width - 1, Math.round(x))), y: Math.max(0, Math.min(canvas.height - 1, Math.round(y))) }
+  mouseDirty = true
+  if (!window.__mouseSenderScheduled) {
+    window.__mouseSenderScheduled = true
+    requestAnimationFrame(function frame() {
+      if (!mouseDirty) { window.__mouseSenderScheduled = false; return }
+      mouseDirty = false
+      send({ type: 'mouse', action: 'move', x: lastMouse.x, y: lastMouse.y })
+      window.__mouseSenderScheduled = false
+    })
+  }
+})
+canvas.addEventListener('mousedown', (e) => {
+  const rect = canvas.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+  const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x)))
+  const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y)))
+  send({ type: 'mouse', action: 'down', x: px, y: py, button: 'left' })
+})
+canvas.addEventListener('mouseup', (e) => {
+  const rect = canvas.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+  const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x)))
+  const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y)))
+  send({ type: 'mouse', action: 'up', x: px, y: py, button: 'left' })
+})
+canvas.addEventListener('dblclick', (e) => {
+  const rect = canvas.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+  const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x)))
+  const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y)))
+  send({ type: 'mouse', action: 'click', x: px, y: py, button: 'left', clickCount: 2 })
+})
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault()
+  const rect = canvas.getBoundingClientRect()
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+  const deltaX = Math.round(e.deltaX)
+  const deltaY = Math.round(e.deltaY)
+  send({ type: 'scroll', deltaX, deltaY, x: Math.round(x), y: Math.round(y) })
+}, { passive: false })
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) { e.preventDefault(); return }
+  if (e.repeat) return
+  if (e.key.length === 1) send({ type: 'keyboard', action: 'press', key: e.key })
+  else { send({ type: 'keyboard', action: 'down', key: e.key }); e.preventDefault() }
+})
+window.addEventListener('keyup', (e) => { if (e.key.length === 1) return; send({ type: 'keyboard', action: 'up', key: e.key }) })
+goBtn.addEventListener('click', () => {
+  const url = addressEl.value.trim()
+  if (!url) return
+  const u = (url.startsWith('http://') || url.startsWith('https://')) ? url : ('https://' + url)
+  send({ type: 'navigate', url: u })
+})
+addressEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') goBtn.click() })
+const devTrigger = document.getElementById('devTrigger')
+const devOverlay = document.getElementById('devOverlay')
+const devClose = document.getElementById('devClose')
+const devCloseBtn = document.getElementById('devCloseBtn')
+const devRefresh = document.getElementById('devRefresh')
+const devServerInfo = document.getElementById('devServerInfo')
+const devImportFile = document.getElementById('devImportFile')
+const devImportBtn = document.getElementById('devImportBtn')
+const devExportBtn = document.getElementById('devExportBtn')
+const devExportFullBtn = document.getElementById('devExportFullBtn')
+const devImportStatus = document.getElementById('devImportStatus')
+const exportProgressWrap = document.getElementById('exportProgressWrap')
+const exportBarInner = document.getElementById('exportBarInner')
+const exportProgressMeta = document.getElementById('exportProgressMeta')
+const importProgressWrap = document.getElementById('importProgressWrap')
+const importBarInner = document.getElementById('importBarInner')
+const importProgressMeta = document.getElementById('importProgressMeta')
+const qualityRange = document.getElementById('qualityRange')
+const qualityValue = document.getElementById('qualityValue')
+const setQualityBtn = document.getElementById('setQualityBtn')
+const checkUpdatesBtn = document.getElementById('checkUpdatesBtn')
+const downloadUpdateBtn = document.getElementById('downloadUpdateBtn')
+const applyUpdateBtn = document.getElementById('applyUpdateBtn')
+const updateStatus = document.getElementById('updateStatus')
+const localVersionEl = document.getElementById('localVersion')
+const chStable = document.getElementById('chStable')
+const chUnstable = document.getElementById('chUnstable')
+const channelInfo = document.getElementById('channelInfo')
+function openDevMenu() { devOverlay.style.display = 'flex'; devOverlay.setAttribute('aria-hidden', 'false'); refreshDevState() }
+function closeDevMenu() { devOverlay.style.display = 'none'; devOverlay.setAttribute('aria-hidden', 'true') }
+devTrigger.addEventListener('click', openDevMenu)
+devClose.addEventListener('click', closeDevMenu)
+devCloseBtn.addEventListener('click', closeDevMenu)
+devRefresh.addEventListener('click', refreshDevState)
+channelInfo.addEventListener('click', ()=>{ alert('Stable: safer and less frequent updates. Unstable: more frequent features but may be buggy.') })
+function refreshDevState() {
+  devServerInfo.textContent = 'loading...'
+  devImportStatus.textContent = ''
+  updateStatus.textContent = ''
+  fetch('/dev/state').then(r => r.json()).then(j => {
+    if (!j.ok) { devServerInfo.textContent = 'error'; return }
+    const s = j.stats
+    devServerInfo.textContent = JSON.stringify({ pid: s.pid, userDataDir: s.userDataDir, platform: s.platform, arch: s.arch, uptime_s: Math.round(s.uptime), jpegQuality: s.jpegQuality || 60 }, null, 2)
+    qualityRange.value = s.jpegQuality || 60
+    qualityValue.textContent = qualityRange.value
+    localVersionEl.textContent = (s.localUpdate && s.localUpdate.channel ? s.localUpdate.channel + ' ' + s.localUpdate.version : 'unknown')
+    if (s.localUpdate && s.localUpdate.channel === 'unstable') chUnstable.checked = true; else chStable.checked = true
+    document.getElementById('devStatusBadge').textContent = 'OK'
+  }).catch(e => { devServerInfo.textContent = 'error: ' + String(e); document.getElementById('devStatusBadge').textContent = 'error' })
+}
+function showExportProgress() { exportProgressWrap.style.display = 'flex'; exportBarInner.style.width = '2%'; exportProgressMeta.textContent = 'starting...' }
+function hideExportProgress() { exportProgressWrap.style.display = 'none'; exportBarInner.style.width = '0%'; exportProgressMeta.textContent = '' }
+function showImportProgress() { importProgressWrap.style.display = 'flex'; importBarInner.style.width = '2%'; importProgressMeta.textContent = 'starting...' }
+function hideImportProgress() { importProgressWrap.style.display = 'none'; importBarInner.style.width = '0%'; importProgressMeta.textContent = '' }
+function handleDevWsMessage(data) {
+  if (!data || !data.type) return
+  if (data.type === 'export-start') { showExportProgress(); exportProgressMeta.textContent = `Preparing export (${data.filename})` }
+  else if (data.type === 'export-progress') {
+    const bytes = Number(data.processedBytes || 0)
+    const cap = 200 * 1024 * 1024
+    const pct = Math.min(100, Math.round((bytes / cap) * 100))
+    exportBarInner.style.width = (pct < 2 ? 2 : pct) + '%'
+    exportProgressMeta.textContent = `${(bytes/1024/1024).toFixed(2)} MB`
+  } else if (data.type === 'export-complete') { exportBarInner.style.width = '100%'; exportProgressMeta.textContent = 'pack complete — downloading'; setTimeout(() => hideExportProgress(), 1200) }
+  else if (data.type === 'import-start') { showImportProgress(); importProgressMeta.textContent = `Importing ${data.name}…` }
+  else if (data.type === 'import-progress') {
+    const entries = Number(data.entriesProcessed || 0)
+    const cap = 5000
+    const pct = Math.min(100, Math.round((entries / cap) * 100))
+    importBarInner.style.width = (pct < 2 ? 2 : pct) + '%'
+    importProgressMeta.textContent = `${entries} entries processed • ${data.name || ''}`
+  } else if (data.type === 'import-extracted') { importBarInner.style.width = '80%'; importProgressMeta.textContent = `${data.entries} entries extracted` }
+  else if (data.type === 'import-finish') { importBarInner.style.width = '100%'; importProgressMeta.textContent = data.message || 'import complete'; setTimeout(() => hideImportProgress(), 1200) }
+  else if (data.type === 'import-error') { importBarInner.style.width = '100%'; importProgressMeta.textContent = 'import error: ' + (data.message || ''); setTimeout(() => hideImportProgress(), 1800) }
+}
+function handleMessageWrapper(ev) {
+  try {
+    if (typeof ev.data === 'string' || ev.data instanceof String) {
+      const data = JSON.parse(ev.data)
+      handleDevWsMessage(data)
+      handleMessage(ev)
+    } else handleMessage(ev)
+  } catch (e) { console.warn(e); handleMessage(ev) }
+}
+devExportBtn.addEventListener('click', async () => {
+  devImportStatus.textContent = 'starting export...'
+  showExportProgress()
+  try {
+    const resp = await fetch('/dev/export?full=0')
+    if (!resp.ok) { devImportStatus.textContent = 'export failed'; hideExportProgress(); return }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'exported_profile_min.tar.gz'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+    devImportStatus.textContent = 'export complete'
+    hideExportProgress()
+  } catch (e) { devImportStatus.textContent = 'export error'; hideExportProgress() }
+})
+devExportFullBtn.addEventListener('click', async () => {
+  devImportStatus.textContent = 'starting full export...'
+  showExportProgress()
+  try {
+    const resp = await fetch('/dev/export?full=1')
+    if (!resp.ok) { devImportStatus.textContent = 'export failed'; hideExportProgress(); return }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'exported_profile_full.tar.gz'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+    devImportStatus.textContent = 'full export complete'
+    hideExportProgress()
+  } catch (e) { devImportStatus.textContent = 'export error'; hideExportProgress() }
+})
+devImportBtn.addEventListener('click', async () => {
+  const f = devImportFile.files[0]
+  if (!f) { devImportStatus.textContent = 'select a .zip/.tar.gz first'; return }
+  devImportStatus.textContent = 'uploading...'
+  showImportProgress()
+  const fd = new FormData()
+  fd.append('file', f)
+  try {
+    const r = await fetch('/dev/import', { method: 'POST', body: fd })
+    const j = await r.json()
+    if (j && j.ok) {
+      devImportStatus.textContent = 'import successful: ' + (j.message || '')
+      setTimeout(() => location.reload(), 1200)
+    } else {
+      devImportStatus.textContent = 'import failed: ' + (j && j.message ? j.message : 'unknown')
+      hideImportProgress()
+    }
+  } catch (e) { devImportStatus.textContent = 'import error'; hideImportProgress() }
+})
+qualityRange.addEventListener('input', () => { qualityValue.textContent = qualityRange.value })
+setQualityBtn.addEventListener('click', async () => {
+  const q = Number(qualityRange.value)
+  try {
+    const r = await fetch('/dev/set-quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quality: q }) })
+    const j = await r.json()
+    if (j && j.ok) {
+      devImportStatus.textContent = 'quality updated: ' + j.quality
+    } else devImportStatus.textContent = 'failed to update quality'
+  } catch (e) { devImportStatus.textContent = 'error updating quality' }
+})
+checkUpdatesBtn.addEventListener('click', async () => {
+  updateStatus.textContent = 'checking...'
+  try {
+    const ch = document.querySelector('input[name="channel"]:checked')?.value || 'stable'
+    const r = await fetch('/dev/check-updates?channel=' + encodeURIComponent(ch))
+    const j = await r.json()
+    if (!j.ok) { updateStatus.textContent = 'check failed'; return }
+    if (j.updateAvailable) {
+      updateStatus.textContent = 'update available: ' + j.remote.version
+      downloadUpdateBtn.disabled = false
+      applyUpdateBtn.disabled = true
+      downloadUpdateBtn.dataset.channel = ch
+      downloadUpdateBtn.dataset.version = j.remote.version
+    } else {
+      updateStatus.textContent = 'up-to-date (' + j.local.version + ')'
+      downloadUpdateBtn.disabled = true
+      applyUpdateBtn.disabled = true
+    }
+  } catch (e) { updateStatus.textContent = 'error' }
+})
+downloadUpdateBtn.addEventListener('click', async () => {
+  updateStatus.textContent = 'downloading...'
+  try {
+    const ch = downloadUpdateBtn.dataset.channel || 'stable'
+    const r = await fetch('/dev/download-update?channel=' + encodeURIComponent(ch))
+    const j = await r.json()
+    if (!j.ok) { updateStatus.textContent = 'download failed'; return }
+    updateStatus.textContent = 'downloaded: ready to apply'
+    applyUpdateBtn.disabled = false
+    applyUpdateBtn.dataset.channel = ch
+  } catch (e) { updateStatus.textContent = 'error' }
+})
+applyUpdateBtn.addEventListener('click', async () => {
+  updateStatus.textContent = 'applying...'
+  try {
+    const ch = applyUpdateBtn.dataset.channel || 'stable'
+    const r = await fetch('/dev/apply-update?channel=' + encodeURIComponent(ch) + '&restart=0', { method: 'POST' })
+    const j = await r.json()
+    if (!j.ok) { updateStatus.textContent = 'apply failed'; return }
+    updateStatus.textContent = 'applied: ' + (j.message || '')
+    refreshDevState()
+  } catch (e) { updateStatus.textContent = 'error' }
+})
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (devOverlay.style.display === 'flex') closeDevMenu() } })
+document.addEventListener('click', async function resumeAudio(e) {
+  try {
+    if (window.__audioCtx && window.__audioCtx.state === 'suspended') await window.__audioCtx.resume()
+  } catch (e) {}
+  document.removeEventListener('click', resumeAudio)
+})
+</script>
+</body>
+</html>
